@@ -1,0 +1,172 @@
+name: Self-Hosted Runner Info
+
+on:
+  workflow_dispatch:
+    inputs:
+      show_env:
+        description: "Show GITHUB_* environment variables"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  runner-details:
+    name: Collect Runner Details
+    runs-on: self-hosted
+
+    steps:
+      # ──────────────────────────────────────────────
+      # 1. Identity
+      # ──────────────────────────────────────────────
+      - name: Identity — hostname & user
+        run: |
+          echo "===== HOSTNAME ====="
+          hostname
+          echo ""
+          echo "===== CURRENT USER ====="
+          whoami
+          echo ""
+          echo "===== USER ID & GROUPS ====="
+          id
+
+      # ──────────────────────────────────────────────
+      # 2. Operating System
+      # ──────────────────────────────────────────────
+      - name: OS — kernel & distribution
+        run: |
+          echo "===== KERNEL / UNAME ====="
+          uname -a
+          echo ""
+          echo "===== OS RELEASE ====="
+          cat /etc/os-release
+          echo ""
+          echo "===== UPTIME ====="
+          uptime
+
+      # ──────────────────────────────────────────────
+      # 3. Network — private & public IPs
+      # ──────────────────────────────────────────────
+      - name: Network — private IPs
+        run: |
+          echo "===== PRIVATE IPs (hostname -I) ====="
+          hostname -I
+          echo ""
+          echo "===== FULL INTERFACE LIST (ip addr) ====="
+          ip addr show
+
+      - name: Network — public IP
+        run: |
+          echo "===== PUBLIC IP ====="
+          curl -s --max-time 5 https://ifconfig.me || \
+          curl -s --max-time 5 https://api.ipify.org || \
+          echo "(unable to reach public IP lookup service)"
+
+      # ──────────────────────────────────────────────
+      # 4. Hardware — CPU & Memory & Disk
+      # ──────────────────────────────────────────────
+      - name: Hardware — CPU
+        run: |
+          echo "===== CPU SUMMARY (lscpu) ====="
+          lscpu | grep -E "Architecture|CPU\(s\)|Model name|Thread|Core|Socket|CPU MHz|Virtualization"
+          echo ""
+          echo "===== LOGICAL CPU COUNT ====="
+          nproc
+
+      - name: Hardware — Memory
+        run: |
+          echo "===== MEMORY (free -h) ====="
+          free -h
+
+      - name: Hardware — Disk
+        run: |
+          echo "===== DISK USAGE (df -h) ====="
+          df -h --output=source,size,used,avail,pcent,target | head -20
+
+      # ──────────────────────────────────────────────
+      # 5. Runner environment variables
+      # ──────────────────────────────────────────────
+      - name: Runner — RUNNER_* variables
+        run: |
+          echo "===== RUNNER ENVIRONMENT VARIABLES ====="
+          env | grep '^RUNNER_' | sort
+
+      - name: Runner — GITHUB_* variables (safe subset)
+        if: ${{ inputs.show_env == 'true' }}
+        run: |
+          echo "===== GITHUB CONTEXT VARIABLES ====="
+          echo "GITHUB_ACTOR        = $GITHUB_ACTOR"
+          echo "GITHUB_REPOSITORY   = $GITHUB_REPOSITORY"
+          echo "GITHUB_REF          = $GITHUB_REF"
+          echo "GITHUB_SHA          = $GITHUB_SHA"
+          echo "GITHUB_RUN_ID       = $GITHUB_RUN_ID"
+          echo "GITHUB_RUN_NUMBER   = $GITHUB_RUN_NUMBER"
+          echo "GITHUB_RUN_ATTEMPT  = $GITHUB_RUN_ATTEMPT"
+          echo "GITHUB_WORKFLOW     = $GITHUB_WORKFLOW"
+          echo "GITHUB_JOB          = $GITHUB_JOB"
+          echo "GITHUB_ACTION       = $GITHUB_ACTION"
+          echo "GITHUB_ACTIONS      = $GITHUB_ACTIONS"
+          echo "GITHUB_WORKSPACE    = $GITHUB_WORKSPACE"
+          echo "GITHUB_ENV          = $GITHUB_ENV"
+          echo "RUNNER_OS           = $RUNNER_OS"
+          echo "RUNNER_ARCH         = $RUNNER_ARCH"
+          echo "RUNNER_NAME         = $RUNNER_NAME"
+          echo "RUNNER_TOOL_CACHE   = $RUNNER_TOOL_CACHE"
+
+      # ──────────────────────────────────────────────
+      # 6. Installed tools snapshot
+      # ──────────────────────────────────────────────
+      - name: Tools — versions
+        run: |
+          echo "===== TOOL VERSIONS ====="
+          echo -n "bash:    "; bash --version | head -1
+          echo -n "git:     "; git --version 2>/dev/null || echo "not installed"
+          echo -n "node:    "; node --version 2>/dev/null || echo "not installed"
+          echo -n "npm:     "; npm --version 2>/dev/null  || echo "not installed"
+          echo -n "python3: "; python3 --version 2>/dev/null || echo "not installed"
+          echo -n "docker:  "; docker --version 2>/dev/null || echo "not installed"
+          echo -n "nginx:   "; nginx -v 2>&1 || echo "not installed"
+          echo -n "pm2:     "; pm2 --version 2>/dev/null || echo "not installed"
+          echo -n "psql:    "; psql --version 2>/dev/null || echo "not installed"
+
+      # ──────────────────────────────────────────────
+      # 7. Job Summary (rendered in the Actions UI)
+      # ──────────────────────────────────────────────
+      - name: Write Job Summary
+        run: |
+          PRIVATE_IPS=$(hostname -I | tr ' ' ', ' | sed 's/, $//')
+          PUBLIC_IP=$(curl -s --max-time 5 https://ifconfig.me || echo "n/a")
+          OS_NAME=$(. /etc/os-release && echo "$PRETTY_NAME")
+          CPU_MODEL=$(lscpu | grep "Model name" | sed 's/Model name:\s*//' | xargs)
+          CPU_COUNT=$(nproc)
+          TOTAL_MEM=$(free -h | awk '/^Mem:/ {print $2}')
+          DISK_ROOT=$(df -h / | awk 'NR==2 {print $2 " total, " $3 " used, " $4 " free"}')
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Self-Hosted Runner Details
+
+          | Property         | Value |
+          |------------------|-------|
+          | **Hostname**     | $(hostname) |
+          | **Runner Name**  | $RUNNER_NAME |
+          | **Runner OS**    | $RUNNER_OS / $RUNNER_ARCH |
+          | **OS Version**   | $OS_NAME |
+          | **Private IPs**  | $PRIVATE_IPS |
+          | **Public IP**    | $PUBLIC_IP |
+          | **CPU**          | $CPU_MODEL ($CPU_COUNT logical cores) |
+          | **Memory**       | $TOTAL_MEM total |
+          | **Disk (/)** | $DISK_ROOT |
+
+          ---
+
+          ### GitHub Actions Context
+          | Variable | Value |
+          |----------|-------|
+          | Actor | $GITHUB_ACTOR |
+          | Repository | $GITHUB_REPOSITORY |
+          | Run ID | $GITHUB_RUN_ID |
+          | Run Number | $GITHUB_RUN_NUMBER |
+          | Workspace | $GITHUB_WORKSPACE |
+          EOF
